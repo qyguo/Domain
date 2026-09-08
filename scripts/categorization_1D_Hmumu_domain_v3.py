@@ -4,6 +4,7 @@ import os
 import json
 import argparse
 from datetime import datetime
+from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,7 @@ import uproot
 import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+
 
 # Example:
 # python3 scripts/categorization_1D_Hmumu_domain_v2.py --score dnn_t \
@@ -34,7 +36,7 @@ def convert_np(obj):
 
 CURRENT_DATE = datetime.now().strftime("%m%d")
 
-ALL_ERAS = ["2022", "2022EE", "2023", "2023BPix", "2024", "2025"]
+ALL_ERAS = ["2022", "2022EE", "2023", "2023BPix", "2024", "2025", "2026"]
 
 # BASE_PATHS below already point to the DNN application directories. Set this
 # to a subdirectory template only when the ROOT files live one level deeper.
@@ -47,6 +49,7 @@ MASS_BRANCH_BY_ERA = {
     "2023BPix": "diMufsr_rc_BSC_mass",
     "2024": "diMufsr_kit_BSC_mass",
     "2025": "diMufsr_kit_BSC_mass",
+    "2026": "diMufsr_kit_BSC_mass",
 }
 
 BASE_PATHS = {
@@ -58,6 +61,7 @@ BASE_PATHS = {
     #"2025": "/eos/user/h/hakou/Hmumu_Share/qguo/2025/skimmed_ntuples/SRSB_noJetHornVeto/",
     "2024": "/eos/user/h/hakou/Hmumu_Share/qguo/2024_v5_SRSB/skimmed_ntuples/SRSB/simpleDNN_DA_0721_2024/",
     "2025": "/eos/user/h/hakou/Hmumu_Share/qguo/2025_v5_SRSB_v2/skimmed_ntuples/SRSB/simpleDNN_DA_0721_2025/",
+    "2026": "/afs/cern.ch/user/h/hakou/private/eos/vbfhmm_2026_skimmed/2026_v5_SRSB_vetoHorn/simpleDNN_DA_0901_2026",
 }
 
 TREE_NAME_BY_ERA = {
@@ -67,6 +71,7 @@ TREE_NAME_BY_ERA = {
     "2023BPix": "data_two_jet_m110To150_VBF",
     "2024": "data_two_jet_m110To150_VBF",
     "2025": "data_two_jet_m110To150_VBF",
+    "2026": "data_two_jet_m110To150_VBF",
 }
 
 SAMPLES_BY_ERA = {
@@ -202,6 +207,28 @@ SAMPLES_BY_ERA = {
         "ST_tW_antitop": "ST_tW_antitop.root",
         "ST_tW_top": "ST_tW_top.root",
     },
+    "2026": {
+        "data": "data.root",
+        "dy_inc": "DY_105To160.root",
+        "dy_inc_fail": "DY_fail_genvbffilter.root",
+        "dy_vbffilter": "DY_FilVBF_pass_genvbffilter.root",
+        "ewk_zjj": "EWK_LLJJ_M105To160.root",
+        "TTTo2L2Nu": "TTTo2L2Nu.root",
+        "vbf_hmm": "VBFHToMuMu_M125.root",
+        "ggh_hmm": "GluGluHToMuMu_M125.root",
+        "WWTo2L2Nu": "WWTo2L2Nu.root",
+        "WWW": "WWW.root",
+        "WWZ": "WWZ.root",
+        "WZTo2L2Q": "WZTo2L2Q.root",
+        "WZTo3LNu": "WZTo3LNu.root",
+        "WZZ": "WZZ.root",
+        "ZZTo2L2Nu": "ZZTo2L2Nu.root",
+        "ZZTo2L2Q": "ZZTo2L2Q.root",
+        "ZZTo4L": "ZZTo4L.root",
+        "ZZZ": "ZZZ.root",
+        "ST_tW_antitop": "ST_tW_antitop.root",
+        "ST_tW_top": "ST_tW_top.root",
+    },
 }
 
 # Main signal used to optimize VBF category.
@@ -222,15 +249,15 @@ BACKGROUND_SAMPLES = [
     "ewk_zjj",
     "TTTo2L2Nu",
     "WWTo2L2Nu",
-    #"WWW",
-    #"WWZ",
+    "WWW",
+    "WWZ",
     "WZTo2L2Q",
     "WZTo3LNu",
-    #"WZZ",
+    "WZZ",
     "ZZTo2L2Nu",
     "ZZTo2L2Q",
     "ZZTo4L",
-    #"ZZZ",
+    "ZZZ",
     "ST_tW_antitop",
     "ST_tW_top",
 ]
@@ -747,6 +774,7 @@ def optimize_boundaries_from_hist(
     require_falling=True,
     max_background_ratio=5.0,
 ):
+    
     nscan = len(h_sig)
 
     sig_cum = np.concatenate([[0.0], np.cumsum(h_sig)])
@@ -783,42 +811,121 @@ def optimize_boundaries_from_hist(
             end = start
             k -= 1
     else:
-        # State (k, start, end) stores the best k-category solution whose last
-        # category is [start, end). Retaining the previous interval allows an
-        # explicit constraint on adjacent category background yields.
+        # # State (k, start, end) stores the best k-category solution whose last
+        # # category is [start, end). Retaining the previous interval allows an
+        # # explicit constraint on adjacent category background yields.
+        # dp = np.full((nbin + 1, nscan + 1, nscan + 1), -np.inf)
+        # prev_start = np.full((nbin + 1, nscan + 1, nscan + 1), -1, dtype=np.int32)
+
+        # for end in range(1, nscan + 1):
+        #     s = interval_sum(sig_cum, 0, end)
+        #     b = interval_sum(bkg_cum, 0, end)
+        #     if b >= minN:
+        #         dp[1, 0, end] = calc_category_z(s, b) ** 2
+
+        # for k in range(2, nbin + 1):
+        #     for end in range(k, nscan + 1):
+        #         for start in range(k - 1, end):
+        #             s_now = interval_sum(sig_cum, start, end)
+        #             b_now = interval_sum(bkg_cum, start, end)
+        #             if b_now < minN:
+        #                 continue
+
+        #             for previous_start in range(k - 2, start):
+        #                 previous_value = dp[k - 1, previous_start, start]
+        #                 if not np.isfinite(previous_value):
+        #                     continue
+
+        #                 b_previous = interval_sum(bkg_cum, previous_start, start)
+        #                 if b_previous + 1e-12 < b_now:
+        #                     continue
+        #                 if b_previous > max_background_ratio * b_now + 1e-12:
+        #                     continue
+
+        #                 value = previous_value + calc_category_z(s_now, b_now) ** 2
+        #                 if value > dp[k, start, end]:
+        #                     dp[k, start, end] = value
+        #                     prev_start[k, start, end] = previous_start
+
+        # last_start = int(np.argmax(dp[nbin, :, nscan]))
+        # best_value = dp[nbin, last_start, nscan]
+        # boundaries_bins = [nscan, last_start]
+        # k = nbin
+        # end = nscan
+        # start = last_start
+
+        # while k > 1 and np.isfinite(best_value):
+        #     previous = int(prev_start[k, start, end])
+        #     if previous < 0:
+        #         break
+        #     boundaries_bins.append(previous)
+        #     end = start
+        #     start = previous
+        #     k -= 1
+        
+
+        # Initialize DP arrays
         dp = np.full((nbin + 1, nscan + 1, nscan + 1), -np.inf)
         prev_start = np.full((nbin + 1, nscan + 1, nscan + 1), -1, dtype=np.int32)
 
+        # Handle the case with only one category (k=1)
         for end in range(1, nscan + 1):
             s = interval_sum(sig_cum, 0, end)
             b = interval_sum(bkg_cum, 0, end)
             if b >= minN:
                 dp[1, 0, end] = calc_category_z(s, b) ** 2
 
+        # Compute layers k = 2 .. nbin
         for k in range(2, nbin + 1):
-            for end in range(k, nscan + 1):
-                for start in range(k - 1, end):
-                    s_now = interval_sum(sig_cum, start, end)
+            # Fix the starting position of the current category
+            for start in range(k - 1, nscan):   # start must be at least k-1 because there are k-1 previous categories
+                dq = deque()                    # Monotonic decreasing queue storing (previous_start, dp_value)
+                left = start - 1                # Initial left boundary of the window is start-1
+
+                # Enumerate the ending position of the current category
+                for end in range(start + 1, nscan + 1):
                     b_now = interval_sum(bkg_cum, start, end)
                     if b_now < minN:
                         continue
 
-                    for previous_start in range(k - 2, start):
-                        previous_value = dp[k - 1, previous_start, start]
-                        if not np.isfinite(previous_value):
-                            continue
+                    # Expand the window to the left until the ratio constraint fails or the minimum index is reached
+                    while left >= k - 2:
+                        b_prev = interval_sum(bkg_cum, left, start)
+                        # When the background is monotonic decreasing, smaller left gives larger b_prev,
+                        # so once the upper limit is exceeded, even smaller left will not satisfy the constraint
+                        if b_prev > max_background_ratio * b_now + 1e-12:
+                            break
 
-                        b_previous = interval_sum(bkg_cum, previous_start, start)
-                        if b_previous + 1e-12 < b_now:
-                            continue
-                        if b_previous > max_background_ratio * b_now + 1e-12:
-                            continue
+                        # Current left satisfies the ratio constraint, add its dp value to the monotonic queue
+                        val = dp[k - 1, left, start]
+                        if np.isfinite(val):
+                            # Maintain decreasing order: pop all elements from the tail that are <= val
+                            while dq and dq[-1][1] <= val:
+                                dq.pop()
+                            dq.append((left, val))
+                        left -= 1
 
-                        value = previous_value + calc_category_z(s_now, b_now) ** 2
-                        if value > dp[k, start, end]:
-                            dp[k, start, end] = value
-                            prev_start[k, start, end] = previous_start
+                    # Remove elements from the queue that are no longer in the current window
+                    # (previous_start smaller than the minimum legal value)
+                    min_legal_prev = max(k - 2, left + 1)
+                    while dq and dq[0][0] < min_legal_prev:
+                        dq.popleft()
 
+                    if not dq:
+                        continue   # No valid predecessor, current state is unreachable
+
+                    # The front of the queue is the maximum dp[k-1][previous_start][start] in the current window
+                    best_prev_val = dq[0][1]
+                    s_now = interval_sum(sig_cum, start, end)
+                    z_now = calc_category_z(s_now, b_now)
+                    new_val = best_prev_val + z_now ** 2
+
+                    # Update the current state
+                    if new_val > dp[k, start, end]:
+                        dp[k, start, end] = new_val
+                        prev_start[k, start, end] = dq[0][0]
+
+        # ---------- Backtrack the optimal boundaries ----------
         last_start = int(np.argmax(dp[nbin, :, nscan]))
         best_value = dp[nbin, last_start, nscan]
         boundaries_bins = [nscan, last_start]
